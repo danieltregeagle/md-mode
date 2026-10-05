@@ -207,6 +207,12 @@ width instead, with long cells spread over several lines.  Set
 `md-render-table-wrap-columns` to `nil` to render them at natural
 width and scroll with the cursor, as in the edit view.
 
+Graphical table layouts keep words intact when space allows.  If the
+combined word widths cannot fit, long words wrap inside their cells rather
+than forcing the table wider than the window.  Complete graphemes (such as
+combined emoji), cell padding and borders are never dropped; extremely
+narrow windows that cannot fit these minimums can still overflow.
+
 Rendered tables are laid out when rendered, when the window width changes,
 and after text scaling; ordinary scrolling does not relayout them.  Layout
 cost grows roughly linearly with table size.  In a four-column mixed CJK/ASCII

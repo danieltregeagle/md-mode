@@ -856,37 +856,48 @@ takes a line of its own."
 (defun md-render--table-widget-column-widths (table available space window)
   "Return pixel widths for the columns of TABLE within AVAILABLE pixels.
 SPACE is the pixel width of a space, and WINDOW measures cells.
-Columns start at their natural widths and shrink toward their longest
-tokens, with no column's floor allowed above half the table."
+Prefer keeping tokens whole, but split them when their widths cannot fit.
+Only complete graphemes and cell padding impose a hard minimum; when
+even those cannot fit, preserve them rather than truncate the content."
   (let* ((columns (length (alist-get :alignments table)))
          (cap (floor (* 0.5 available)))
          (floor-width (1+ (* 2 space)))
          (naturals (make-list columns floor-width))
+         (hard-minimums (make-list columns floor-width))
          (minimums (make-list columns floor-width)))
     (dolist (row (alist-get :processed-rows table))
       (when (cdr row)
-        (setq naturals
-              (cl-mapcar (lambda (natural cell)
-                           (max natural
-                                (+ (* 2 space)
-                                   (md-render--table-measure-string
-                                    cell window))))
-                         naturals (cdr row))
-              minimums
-              (cl-mapcar (lambda (minimum cell)
-                           (max minimum
-                                (+ (* 2 space)
-                                   (max (md-render--table-widget-widest-cluster
-                                         cell window)
-                                        (min (md-render--table-widget-longest-token-pixels
-                                              cell window)
-                                             cap)))))
-                         minimums (cdr row)))))
+        (let ((clusters (mapcar
+                         (lambda (cell)
+                           (md-render--table-widget-widest-cluster cell window))
+                         (cdr row))))
+          (setq naturals
+                (cl-mapcar (lambda (natural cell)
+                             (max natural
+                                  (+ (* 2 space)
+                                     (md-render--table-measure-string
+                                      cell window))))
+                           naturals (cdr row))
+                minimums
+                (cl-mapcar (lambda (minimum cell cluster)
+                             (max minimum
+                                  (+ (* 2 space)
+                                     (max cluster
+                                          (min (md-render--table-widget-longest-token-pixels
+                                                cell window)
+                                               cap)))))
+                           minimums (cdr row) clusters)
+                hard-minimums
+                (cl-mapcar (lambda (minimum cluster)
+                             (max minimum (+ (* 2 space) cluster)))
+                           hard-minimums clusters)))))
     (cond
      ((or (not md-render-table-wrap-columns)
           (<= (apply #'+ naturals) available))
       naturals)
-     ((<= available (apply #'+ minimums)) minimums)
+     ((<= available (apply #'+ minimums))
+      (md-render--shrink-columns minimums hard-minimums
+                                 (- (apply #'+ minimums) available)))
      (t
       (let ((weights (cl-mapcar (lambda (natural minimum)
                                   (max 1 (- (min natural cap) minimum)))

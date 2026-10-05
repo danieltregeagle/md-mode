@@ -1720,6 +1720,64 @@ character per line."
               (first-data (nth 3 lines)))
          (should (string-match-p "supertag-node-delete" first-data)))))))
 
+(ert-deftest md-mode-table-widget-many-long-columns-fit-pixel-budget ()
+  "Break long tokens when their combined preferred widths cannot fit."
+  (with-temp-buffer
+    (let* ((cells '("1" "superchat-work-tool" "superchat-command-handlers"
+                    "workspace-record-update" "模型调用次数"
+                    "request-validation" "用户已经作出的决定" "acceptance-test"))
+           (source (concat "| # | 建议 | 现状 | 改进 | 差别 | 风险 | 决定 | 验证 |\n"
+                           "| --- | --- | --- | --- | --- | --- | --- | --- |\n"
+                           "| " (string-join cells " | ") " |\n"))
+           (widget (widget-convert 'md-render-table-widget :value source))
+           (md-render-table-wrap-columns t))
+      (md-mode-tests--with-table-pixel-mocks
+       (dolist (width '(100 70 50))
+         (let* ((lines (split-string
+                        (md-render--table-widget-layout widget width) "\n"))
+                (borders (md-mode-tests--table-test-border-offsets
+                          (car lines))))
+           (should (= (length borders) 9))
+           ;; The one-character index column needs no extra wrapping.
+           (should (= (- (nth 1 borders) (car borders)) 39))
+           (dolist (line lines)
+             (should (<= (md-mode-tests--table-test-string-pixels line)
+                         (* 10 width)))
+             (should (equal (md-mode-tests--table-test-border-offsets line)
+                            borders)))
+           ;; Wrapping must preserve every cell's content, not truncate it.
+           (dotimes (column (length cells))
+             (should
+              (equal (mapconcat
+                      (lambda (line)
+                        (replace-regexp-in-string
+                         "[ ​]" ""
+                         (nth (1+ column) (split-string line "│"))))
+                      (cl-remove-if-not
+                       (lambda (line) (string-prefix-p "│" line))
+                       (nthcdr 3 lines)) "")
+                     (nth column cells))))))))))
+
+(ert-deftest md-mode-table-widget-hard-minimum-preserves-graphemes ()
+  "Keep complete graphemes when even the hard minimum cannot fit."
+  (with-temp-buffer
+    (let* ((grapheme "👨‍👩‍👧‍👦")
+           (source (concat "| A | B |\n| --- | --- |\n| "
+                           grapheme " | long-unbreakable-token |\n"))
+           (widget (widget-convert 'md-render-table-widget :value source))
+           (md-render-table-wrap-columns t))
+      (md-mode-tests--with-table-pixel-mocks
+       (let* ((lines (split-string
+                      (md-render--table-widget-layout widget 8) "\n"))
+              (borders (md-mode-tests--table-test-border-offsets (car lines))))
+         (should (cl-some (lambda (line) (string-search grapheme line)) lines))
+         ;; In this physically impossible width, overflow is preferable to
+         ;; splitting the family emoji or dropping content.
+         (should (> (md-mode-tests--table-test-string-pixels (car lines)) 80))
+         (dolist (line lines)
+           (should (equal (md-mode-tests--table-test-border-offsets line)
+                          borders))))))))
+
 (ert-deftest md-mode-table-widget-no-wrap-keeps-natural-pixel-width ()
   (with-temp-buffer
     (let* ((source (concat "| Name | Description |\n| --- | --- |\n"
