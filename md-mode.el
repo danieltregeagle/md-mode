@@ -2382,6 +2382,52 @@ Preserve rendered properties when Font Lock is disabled or restarted."
       (md-mode-outdent-list-item)
     (outline-cycle-buffer)))
 
+(defun md-mode--source-table-target ()
+  "Return (BEGIN-MARKER ROW COLUMN COLUMNS) for the source table at point.
+Return nil outside a table.  Used to keep point in its cell when
+the table is replaced by a rendered widget."
+  (when-let* ((bounds (md-mode--table-bounds)))
+    (let ((begin (nth 0 bounds))
+          (columns (nth 2 bounds)))
+      (list (copy-marker begin)
+            (count-lines begin (line-beginning-position))
+            (min (md-mode--table-cell-index) (max 0 (1- columns)))
+            columns))))
+
+(defun md-mode--goto-rendered-table-cell (target)
+  "Move point to the rendered cell described by TARGET.
+TARGET is a value from `md-mode--source-table-target'.  The
+delimiter row is not rendered, so source rows after it shift up."
+  (pcase-let ((`(,marker ,row ,column ,columns) target))
+    (goto-char marker)
+    (set-marker marker nil)
+    (when-let* ((starts (md-render--table-cell-starts)))
+      (let* ((rendered-row (if (< row 2) row (1- row)))
+             (index (+ (* rendered-row columns) column)))
+        (goto-char (nth (min index (1- (length starts))) starts))))))
+
+(defun md-mode--rendered-table-target ()
+  "Return (BEGIN ROW COLUMN) for point in a rendered table, or nil.
+BEGIN is the table's position in the reconstructed source."
+  (when-let* (((< (point) (point-max)))
+              (source (get-text-property (point) 'md-render-table-source))
+              (starts (md-render--table-cell-starts)))
+    (let* ((run-start (or (previous-single-property-change
+                           (1+ (point)) 'md-render-table-source)
+                          (point-min)))
+           (line (string-trim (car (split-string source "\n"))))
+           (line (string-remove-suffix "|" (string-remove-prefix "|" line)))
+           (columns (1+ (cl-count ?| (replace-regexp-in-string
+                                      "\\\\|" "" line))))
+           (index (or (cl-position-if (lambda (pos) (<= pos (point)))
+                                      starts :from-end t)
+                      0))
+           (rendered-row (/ index columns)))
+      (list (+ (point-min)
+               (length (md-render-reconstruct (point-min) run-start)))
+            (if (zerop rendered-row) 0 (1+ rendered-row))
+            (% index columns)))))
+
 (defun md-mode--source-position-at-point ()
   "Return the source position corresponding to point in rendered Markdown."
   (let* ((position (point))
@@ -2563,9 +2609,11 @@ When FORCE is non-nil, relayout even when the character width is unchanged."
           ;; abort the first render after an external tool rewrites the
           ;; visited file (e.g. a doc regenerated while previewing).
           (buffer-file-name nil)
-          (buffer-file-truename nil))
+          (buffer-file-truename nil)
+          table-target)
       (save-restriction
         (widen)
+        (setq table-target (md-mode--source-table-target))
         (when font-lock-mode
           (font-lock-ensure))
         ;; Track point through markup removal instead of leaving it at
@@ -2576,6 +2624,8 @@ When FORCE is non-nil, relayout even when the character width is unchanged."
             (md-render-replace-markup :force t :defer-tables t)
             (md-mode--attach-table-widgets))))
       (md-mode--set-rendered-p t)
+      (when table-target
+        (md-mode--goto-rendered-table-cell table-target))
       (md-mode--scale-heading-fallback-font)
       (set-buffer-modified-p modified)
       (md-mode--refresh-toc))))
@@ -2587,6 +2637,7 @@ When FORCE is non-nil, relayout even when the character width is unchanged."
   (when md-mode--rendered-p
     (let ((modified (buffer-modified-p))
           (source-point nil)
+          (table-target nil)
           (buffer-undo-list t)
           (inhibit-read-only t)
           ;; Restoring source is a view change, not an edit — see
@@ -2597,7 +2648,8 @@ When FORCE is non-nil, relayout even when the character width is unchanged."
           (buffer-file-truename nil))
       (save-restriction
         (widen)
-        (setq source-point (md-mode--source-position-at-point))
+        (setq source-point (md-mode--source-position-at-point)
+              table-target (md-mode--rendered-table-target))
         (with-silent-modifications
           (md-mode--clear-table-widgets)
           (let ((source (md-render-reconstruct (point-min) (point-max))))
@@ -2606,6 +2658,9 @@ When FORCE is non-nil, relayout even when the character width is unchanged."
       (md-mode--set-rendered-p nil)
       (font-lock-flush)
       (goto-char (min source-point (point-max)))
+      (when table-target
+        (pcase-let ((`(,begin ,row ,column) table-target))
+          (md-mode--goto-table-cell begin row column)))
       (set-buffer-modified-p modified)
       (md-mode--refresh-toc))))
 

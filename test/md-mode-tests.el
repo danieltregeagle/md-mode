@@ -1132,6 +1132,26 @@
       (forward-line 1)
       (should (equal (get-text-property (point) 'wrap-prefix) "    ")))))
 
+(ert-deftest md-mode-keeps-point-in-table-cell-across-view-toggle ()
+  (with-temp-buffer
+    (switch-to-buffer (current-buffer))
+    (insert "Intro.\n\n| Name | Qty |\n|---|---|\n"
+            "| apple | 3 |\n| pear | 12 |\n\nAfter.\n")
+    (md-mode)
+    (dolist (case '(("Name" . "Name") ("Qty" . "Qty") ("apple" . "apple")
+                    ("3" . "3") ("pear" . "pear") ("12" . "12")))
+      (goto-char (point-min))
+      (search-forward (car case))
+      (md-mode-render)
+      (should (looking-at-p (regexp-quote (cdr case))))
+      (md-mode-show-source)
+      (should (looking-at-p (regexp-quote (cdr case)))))
+    (goto-char (point-min))
+    (search-forward "After")
+    (md-mode-render)
+    (md-mode-show-source)
+    (should (looking-at-p "\\.\n"))))
+
 (ert-deftest md-mode-creates-standard-table ()
   (with-temp-buffer
     (md-mode)
